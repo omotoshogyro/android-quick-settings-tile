@@ -1,0 +1,6 @@
+{
+  "name": "expo-habit-tile",
+  "version": "0.1.0",
+  "description": "Local Expo module: Android Quick Settings Tile for one-tap habit logging",
+  "main": "index.ts"
+}
