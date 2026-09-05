@@ -22,6 +22,12 @@ object HabitStore {
     private const val KEY_STREAK = "streak_raw"          // streak as of the last log
     private const val KEY_REST_DAY_AT = "rest_day_at"    // epoch ms of the day marked as rest
     private const val KEY_HEARTBEAT = "heartbeat_at"     // last time the app process was alive
+    private const val KEY_REMINDER_ENABLED = "reminder_enabled"
+    private const val KEY_REMINDER_HOUR = "reminder_hour"
+    private const val KEY_REMINDER_MINUTE = "reminder_minute"
+
+    const val DEFAULT_REMINDER_HOUR = 20
+    const val DEFAULT_REMINDER_MINUTE = 0
 
     private fun prefs(ctx: Context) =
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -105,6 +111,41 @@ object HabitStore {
             else -> "not yet"
         }
         return "$streak day streak · $tail"
+    }
+
+    /** Milliseconds from [now] until the next local midnight (>= 0). */
+    fun msUntilLocalMidnight(now: Long = System.currentTimeMillis()): Long {
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = now
+            add(Calendar.DAY_OF_YEAR, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return (cal.timeInMillis - now).coerceAtLeast(0L)
+    }
+
+    // ---- Streak-at-risk reminder settings ----
+    // Only the *settings* live here. Whether a reminder actually fires is
+    // decided at alarm time by reading this store (see ReminderScheduler), so
+    // nothing about the reminder is ever pre-computed or maintained on a timer.
+
+    fun reminderEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_REMINDER_ENABLED, false)
+
+    fun reminderHour(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_REMINDER_HOUR, DEFAULT_REMINDER_HOUR).coerceIn(0, 23)
+
+    fun reminderMinute(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_REMINDER_MINUTE, DEFAULT_REMINDER_MINUTE).coerceIn(0, 59)
+
+    fun setReminder(ctx: Context, enabled: Boolean, hour: Int, minute: Int) {
+        prefs(ctx).edit()
+            .putBoolean(KEY_REMINDER_ENABLED, enabled)
+            .putInt(KEY_REMINDER_HOUR, hour.coerceIn(0, 23))
+            .putInt(KEY_REMINDER_MINUTE, minute.coerceIn(0, 59))
+            .apply()
     }
 
     fun writeHeartbeat(ctx: Context, now: Long = System.currentTimeMillis()) {
