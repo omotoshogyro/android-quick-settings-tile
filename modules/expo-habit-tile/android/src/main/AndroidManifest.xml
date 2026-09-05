@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Merged into the app manifest at build time (library manifest merge). -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
   <application>
     <!-- Quick Settings Tile. Merged into the app manifest at build time.
          BIND_QUICK_SETTINGS_TILE lets the system bind the service; the
@@ -16,5 +20,27 @@
           android:name="android.service.quicksettings.ACTIVE_TILE"
           android:value="false" />
     </service>
+
+    <!-- Streak-at-risk reminder. The alarm and the "Log now" action arrive via
+         explicit PendingIntents, so neither receiver needs to be exported. -->
+    <receiver
+        android:name="expo.modules.habittile.ReminderAlarmReceiver"
+        android:exported="false" />
+    <receiver
+        android:name="expo.modules.habittile.ReminderActionReceiver"
+        android:exported="false" />
+
+    <!-- Re-arms the alarm after reboot / app update / time or timezone change.
+         Protected system broadcasts; the receiver ignores any other action. -->
+    <receiver
+        android:name="expo.modules.habittile.ReminderBootReceiver"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        <action android:name="android.intent.action.TIME_SET" />
+        <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+      </intent-filter>
+    </receiver>
   </application>
 </manifest>

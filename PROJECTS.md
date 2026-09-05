@@ -67,24 +67,51 @@ A tile in the notification shade that logs a daily habit in **one gesture, zero 
 - **`STATE_UNAVAILABLE`** for a rest day / already-logged — communicating "nothing to do here" beats a toggle that lies.
 - **`currentStreak()` derives the lapse on read**; `getState()` returns the corrected value so the app and tile never disagree.
 - Onboarding handles both battery layers: AOSP exemption check/route + OEM autostart routing (DontKillMyApp) + a heartbeat that re-prompts if it detects a kill.
-- Future surfaces that share the same store: a **home-screen widget** (streak grid — great display, poor input) and a **scheduled notification** when a live streak is at risk (driven by `hoursLeftToday`). Same architecture, three surfaces.
+- Future surface that shares the same store: a **home-screen widget** (streak grid — great display, poor input). Same architecture, three surfaces.
+
+### Surface 2 — the streak-at-risk reminder *(built)*
+A notification in the evening, **only** when a live streak is still unlogged and it isn't a rest day. Pure native (Kotlin in the same module) because the common user never opens the app — they log from the tile — so JS-scheduled notifications (`expo-notifications`) could neither be cancelled by the tile nor reconciled while JS is dead.
+
+- **The alarm is a wake-up, not a decision.** `ReminderScheduler.onAlarmFired()` reads `HabitStore` at fire time (`currentStreak > 0 && !loggedToday && !isRestDay && notificationsAllowed`) and is silent otherwise. Nothing is pre-computed, so a tile log at 3pm makes the 8pm alarm a no-op with zero coordination.
+- **Inexact by design.** `AlarmManager.setAndAllowWhileIdle(RTC_WAKEUP)` fires through Doze, needs no `SCHEDULE_EXACT_ALARM` (not pre-granted on 14+, Play-policed) — minutes of drift are fine for a nudge. `setWindow` would be deferred to a Doze maintenance window (phone in pocket at 8pm), so it's the worse fit.
+- **One idempotent re-arm entry point**, `ReminderScheduler.scheduleNext()`, called from every touchpoint: tile `onClick`/`onStartListening` (self-heals an alarm an OEM force-stop dropped), JS `logHabit`/`setRestDay`/`setReminder`, `OnActivityEntersForeground`, the alarm itself, and a receiver for `BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` / `TIME_SET` / `TIMEZONE_CHANGED` (all on the implicit-broadcast exemption list).
+- **"Log now" is a BroadcastReceiver** that calls the same `HabitStore.logHabit()` — tile, app and notification can never disagree — then cancels the notification and asks the tile to re-render. No activity trampoline.
+- **`setTimeoutAfter(msUntilLocalMidnight)`** so a reminder about *today* never survives into tomorrow.
+- Settings (`reminder_enabled`, `reminder_hour`, `reminder_minute`) live in the same prefs file; default 20:00, off until the user grants `POST_NOTIFICATIONS` (13+) — granting switches it on.
 
 ### Where it lives (this repo)
 - `modules/expo-habit-tile/` — the local module:
   - `expo-module.config.json` (`platforms: ["android"]`, FQCN in `android.modules`)
   - `android/src/main/java/expo/modules/habittile/`
-    - `HabitStore.kt` — the derive-from-timestamp store (the heart of it)
-    - `HabitTileService.kt` — the tile (subtitle + one-tap log + 3 states)
-    - `ExpoHabitTileModule.kt` — JS bridge + battery/OEM escape hatches
-  - `android/src/main/AndroidManifest.xml` — the tile `<service>` (manifest-merged)
-  - `android/src/main/res/drawable/ic_habit_tile.xml` — tile icon
+    - `HabitStore.kt` — the derive-from-timestamp store (the heart of it) + reminder settings
+    - `HabitTileService.kt` — the tile (subtitle + one-tap log + 3 states; re-arms the reminder)
+    - `ExpoHabitTileModule.kt` — JS bridge + battery/OEM escape hatches + reminder settings + `POST_NOTIFICATIONS` permission (`AsyncFunction`s via Expo's `Permissions` helper)
+    - `ReminderScheduler.kt` — arm/cancel the alarm, decide-at-fire-time, post/cancel the notification, channel
+    - `ReminderAlarmReceiver.kt` — alarm → `onAlarmFired`
+    - `ReminderActionReceiver.kt` — the "Log now" action
+    - `ReminderBootReceiver.kt` — re-arm after boot / update / time / timezone change
+  - `android/src/main/AndroidManifest.xml` — the tile `<service>`, the three `<receiver>`s, `POST_NOTIFICATIONS` + `RECEIVE_BOOT_COMPLETED` (manifest-merged)
+  - `android/src/main/res/drawable/ic_habit_tile.xml` — tile icon; `ic_habit_notification.xml` — untinted small icon
   - `index.ts` — typed JS API via `requireOptionalNativeModule` (degrades gracefully pre-rebuild)
-- `App.tsx` — streak screen, one-tap log, rest-day toggle, battery/autostart onboarding, heartbeat.
+- `App.tsx` — streak screen, one-tap log, rest-day toggle, streak-reminder card (permission → toggle → preset chips + ±15m stepper), battery/autostart onboarding, heartbeat.
 
 ### Verify
 - `expo run:android` onto a Pixel AVD → add the tile via the shade editor → tap logs & increments the streak → reopen shade → subtitle recomputed.
 - Doze/standby via the adb playbook above; confirm the streak still derives correctly after simulated idle (proves the no-timer design).
 - OEM layer only on a physical Transsion/Xiaomi device (not the Pixel).
+- **Reminder:**
+  ```bash
+  adb shell dumpsys package com.habittile.app | grep -E "POST_NOTIFICATIONS|RECEIVE_BOOT_COMPLETED"
+  adb shell dumpsys alarm | grep -B2 -A6 com.habittile.app     # RTC_WAKEUP for ReminderAlarmReceiver
+  adb shell pm revoke com.habittile.app android.permission.POST_NOTIFICATIONS   # flip the card
+  adb shell dumpsys notification --noredact | grep -A20 com.habittile.app
+  adb shell dumpsys battery unplug && adb shell dumpsys deviceidle force-idle   # still fires (≤ ~9 min throttle)
+  adb reboot                                                   # then dumpsys alarm shows it re-armed
+  ```
+  - Fire test: log, advance the device date one day (live streak, unlogged), set the reminder to now + 2 min, lock the screen → "Streak at risk · N day streak · Xh left".
+  - Silent paths: log via the tile first → nothing; rest day → nothing; fresh install (streak 0) → nothing.
+  - "Log now" → notification gone, tile reads "· done" on next shade open, app shows logged, `dumpsys alarm` shows tomorrow.
+  - `am broadcast -n …/ReminderAlarmReceiver` is refused for non-exported receivers on 33+; use the 2-minute test.
 
 ---
 

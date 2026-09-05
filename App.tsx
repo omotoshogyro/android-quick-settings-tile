@@ -12,9 +12,16 @@ import {
 import { StatusBar } from "expo-status-bar";
 
 import * as HabitTile from "./modules/expo-habit-tile";
-import type { HabitState } from "./modules/expo-habit-tile";
+import type {
+  HabitState,
+  PermissionResponse,
+  ReminderState,
+} from "./modules/expo-habit-tile";
 
 const DKMA_API = "https://dontkillmyapp.com/api/v2";
+const REMINDER_PRESETS = [18, 19, 20, 21, 22];
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const fmtTime = (h: number, m: number) => `${pad2(h)}:${pad2(m)}`;
 
 export default function App() {
   const [state, setState] = useState<HabitState>(HabitTile.getState());
@@ -22,11 +29,20 @@ export default function App() {
   const [killGapMin, setKillGapMin] = useState<number>(0);
   const [vendor, setVendor] = useState<string>("");
   const [vendorTip, setVendorTip] = useState<string | null>(null);
+  const [reminder, setReminder] = useState<ReminderState>(HabitTile.getReminder());
+  const [notifPerm, setNotifPerm] = useState<PermissionResponse>({
+    status: "undetermined",
+    granted: false,
+    canAskAgain: true,
+  });
 
   const refresh = useCallback(() => {
     setState(HabitTile.getState());
     setBatteryExempt(HabitTile.isIgnoringBatteryOptimizations());
     setKillGapMin(Math.round(HabitTile.getHeartbeatGapMs() / 60000));
+    // Re-arms the alarm from stored settings and reports the next trigger.
+    setReminder(HabitTile.reconcileReminder());
+    HabitTile.getNotificationPermission().then(setNotifPerm);
   }, []);
 
   // Heartbeat + reconcile on every foreground. If the gap is large, the process
@@ -57,8 +73,40 @@ export default function App() {
       .catch(() => setVendorTip(null));
   }, []);
 
-  const onLog = () => setState(HabitTile.logHabit());
-  const onToggleRest = (rest: boolean) => setState(HabitTile.setRestDay(rest));
+  const onLog = () => {
+    setState(HabitTile.logHabit());
+    setReminder(HabitTile.getReminder());
+  };
+  const onToggleRest = (rest: boolean) => {
+    setState(HabitTile.setRestDay(rest));
+    setReminder(HabitTile.getReminder());
+  };
+
+  // ---- Streak reminder ----
+  const onAllowNotifications = async () => {
+    const res = await HabitTile.requestNotificationPermission();
+    setNotifPerm(res);
+    // Granting is the intent to be reminded: switch it on with stored defaults.
+    if (res.granted && !reminder.enabled) {
+      setReminder(HabitTile.setReminder({ ...reminder, enabled: true }));
+    } else {
+      setReminder(HabitTile.getReminder());
+    }
+  };
+  const onToggleReminder = (enabled: boolean) =>
+    setReminder(HabitTile.setReminder({ ...reminder, enabled }));
+  const onPickTime = (hour: number, minute: number) =>
+    setReminder(HabitTile.setReminder({ ...reminder, hour, minute }));
+  const onStepTime = (deltaMin: number) => {
+    const total = (reminder.hour * 60 + reminder.minute + deltaMin + 1440) % 1440;
+    onPickTime(Math.floor(total / 60), total % 60);
+  };
+
+  const reminderReady = notifPerm.granted && reminder.notificationsAllowed;
+  const nextCheck =
+    reminder.enabled && reminder.nextTriggerAt > 0
+      ? new Date(reminder.nextTriggerAt)
+      : null;
 
   const available = HabitTile.isTileAvailable();
 
@@ -99,6 +147,97 @@ export default function App() {
             <Text style={styles.rowSub}>Greys the tile out — nothing to do today</Text>
           </View>
           <Switch value={state.restDay} onValueChange={onToggleRest} />
+        </View>
+
+        {/* Streak-at-risk reminder */}
+        <View style={styles.infoCard}>
+          <View style={styles.cardHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle}>
+                Streak reminder {reminderReady ? "— allowed ✓" : "— off"}
+              </Text>
+              <Text style={styles.rowSub}>
+                Only fires when a streak is live and today is unlogged.
+              </Text>
+            </View>
+            <Switch
+              value={reminder.enabled}
+              onValueChange={onToggleReminder}
+              disabled={!reminderReady}
+            />
+          </View>
+
+          {!reminderReady && (
+            <>
+              <Text style={styles.cardBody}>
+                {notifPerm.granted
+                  ? "Notifications are blocked for this app or channel. Re-enable them in app settings."
+                  : "Allow notifications to get a nudge in the evening when a live streak is still unlogged."}
+              </Text>
+              <Pressable
+                style={styles.secondaryBtn}
+                onPress={
+                  !notifPerm.granted && notifPerm.canAskAgain
+                    ? onAllowNotifications
+                    : HabitTile.openAppSettings
+                }
+              >
+                <Text style={styles.secondaryBtnText}>
+                  {!notifPerm.granted && notifPerm.canAskAgain
+                    ? "Allow notifications"
+                    : "Open app settings"}
+                </Text>
+              </Pressable>
+            </>
+          )}
+
+          {reminderReady && (
+            <>
+              <View style={styles.chipRow}>
+                {REMINDER_PRESETS.map((h) => {
+                  const selected = reminder.hour === h && reminder.minute === 0;
+                  return (
+                    <Pressable
+                      key={h}
+                      style={[styles.chip, selected && styles.chipSelected]}
+                      onPress={() => onPickTime(h, 0)}
+                      disabled={!reminder.enabled}
+                    >
+                      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+                        {fmtTime(h, 0)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <View style={styles.stepperRow}>
+                <Pressable
+                  style={styles.stepBtn}
+                  onPress={() => onStepTime(-15)}
+                  disabled={!reminder.enabled}
+                >
+                  <Text style={styles.stepBtnText}>−15m</Text>
+                </Pressable>
+                <Text style={styles.timeLabel}>
+                  {fmtTime(reminder.hour, reminder.minute)}
+                </Text>
+                <Pressable
+                  style={styles.stepBtn}
+                  onPress={() => onStepTime(15)}
+                  disabled={!reminder.enabled}
+                >
+                  <Text style={styles.stepBtnText}>+15m</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.cardBody}>
+                {reminder.enabled && nextCheck
+                  ? `Next check: ${fmtTime(nextCheck.getHours(), nextCheck.getMinutes())}${
+                      nextCheck.getDate() !== new Date().getDate() ? " tomorrow" : ""
+                    }. Inexact by design — it may arrive a few minutes late.`
+                  : "Off. Turn it on to be nudged before midnight if a live streak is still unlogged."}
+              </Text>
+            </>
+          )}
         </View>
 
         {/* Tile availability + how to add */}
@@ -208,5 +347,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   secondaryBtnText: { color: ACCENT, fontWeight: "700", fontSize: 14 },
+  cardHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: {
+    backgroundColor: "#EEF0FF",
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  chipSelected: { backgroundColor: ACCENT },
+  chipText: { color: ACCENT, fontWeight: "700", fontSize: 13 },
+  chipTextSelected: { color: "#FFFFFF" },
+  stepperRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 16,
+  },
+  stepBtn: {
+    backgroundColor: "#F4F4F7",
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  stepBtnText: { color: INK, fontWeight: "700", fontSize: 13 },
+  timeLabel: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: INK,
+    fontVariant: ["tabular-nums"],
+    minWidth: 72,
+    textAlign: "center",
+  },
   footnote: { fontSize: 12, color: "#9AA0AE", textAlign: "center", marginTop: 8 },
 });
