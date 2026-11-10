@@ -54,6 +54,13 @@ class ExpoHabitTileModule : Module() {
             stateMap()
         }
 
+        Function("unlogToday") {
+            HabitStore.unlogToday(context)
+            ReminderScheduler.scheduleNext(context)
+            ReminderScheduler.refreshTile(context)
+            stateMap()
+        }
+
         Function("setRestDay") { rest: Boolean ->
             HabitStore.setRestDay(context, rest)
             if (rest) ReminderScheduler.cancelNotification(context)

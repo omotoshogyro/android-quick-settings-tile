@@ -77,6 +77,10 @@ export default function App() {
     setState(HabitTile.logHabit());
     setReminder(HabitTile.getReminder());
   };
+  const onUndo = () => {
+    setState(HabitTile.unlogToday());
+    setReminder(HabitTile.getReminder());
+  };
   const onToggleRest = (rest: boolean) => {
     setState(HabitTile.setRestDay(rest));
     setReminder(HabitTile.getReminder());
@@ -133,18 +137,32 @@ export default function App() {
             pressed && { opacity: 0.85 },
           ]}
           onPress={onLog}
-          disabled={state.restDay}
+          disabled={state.loggedToday}
+          accessibilityRole="button"
+          accessibilityLabel={state.loggedToday ? "Habit logged today" : "Log habit now"}
+          accessibilityState={{ disabled: state.loggedToday }}
         >
           <Text style={styles.logBtnText}>
             {state.loggedToday ? "Logged today ✓" : "Log now"}
           </Text>
         </Pressable>
 
+        {state.loggedToday && (
+          <Pressable
+            style={styles.secondaryBtn}
+            onPress={onUndo}
+            accessibilityRole="button"
+            accessibilityLabel="Undo today's log"
+          >
+            <Text style={styles.secondaryBtnText}>Undo today's log</Text>
+          </Pressable>
+        )}
+
         {/* Rest day */}
         <View style={styles.rowCard}>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowTitle}>Rest day</Text>
-            <Text style={styles.rowSub}>Greys the tile out — nothing to do today</Text>
+            <Text style={styles.rowSub}>Streak is preserved; you can still log if you want</Text>
           </View>
           <Switch value={state.restDay} onValueChange={onToggleRest} />
         </View>
@@ -181,6 +199,12 @@ export default function App() {
                     ? onAllowNotifications
                     : HabitTile.openAppSettings
                 }
+                accessibilityRole="button"
+                accessibilityLabel={
+                  !notifPerm.granted && notifPerm.canAskAgain
+                    ? "Allow notifications"
+                    : "Open app settings"
+                }
               >
                 <Text style={styles.secondaryBtnText}>
                   {!notifPerm.granted && notifPerm.canAskAgain
@@ -202,6 +226,9 @@ export default function App() {
                       style={[styles.chip, selected && styles.chipSelected]}
                       onPress={() => onPickTime(h, 0)}
                       disabled={!reminder.enabled}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remind at ${fmtTime(h, 0)}`}
+                      accessibilityState={{ selected, disabled: !reminder.enabled }}
                     >
                       <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
                         {fmtTime(h, 0)}
@@ -215,6 +242,9 @@ export default function App() {
                   style={styles.stepBtn}
                   onPress={() => onStepTime(-15)}
                   disabled={!reminder.enabled}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remind 15 minutes earlier"
+                  accessibilityState={{ disabled: !reminder.enabled }}
                 >
                   <Text style={styles.stepBtnText}>−15m</Text>
                 </Pressable>
@@ -225,6 +255,9 @@ export default function App() {
                   style={styles.stepBtn}
                   onPress={() => onStepTime(15)}
                   disabled={!reminder.enabled}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remind 15 minutes later"
+                  accessibilityState={{ disabled: !reminder.enabled }}
                 >
                   <Text style={styles.stepBtnText}>+15m</Text>
                 </Pressable>
@@ -249,7 +282,12 @@ export default function App() {
               : "Native module not loaded yet — rebuild the Android app (expo run:android)."}
           </Text>
           {available && (
-            <Pressable style={styles.secondaryBtn} onPress={HabitTile.requestAddTile}>
+            <Pressable
+              style={styles.secondaryBtn}
+              onPress={HabitTile.requestAddTile}
+              accessibilityRole="button"
+              accessibilityLabel="Add the Quick Settings tile"
+            >
               <Text style={styles.secondaryBtnText}>Add the tile</Text>
             </Pressable>
           )}
@@ -267,6 +305,8 @@ export default function App() {
           <Pressable
             style={styles.secondaryBtn}
             onPress={HabitTile.openBatteryOptimizationSettings}
+            accessibilityRole="button"
+            accessibilityLabel="Open battery settings"
           >
             <Text style={styles.secondaryBtnText}>Open battery settings</Text>
           </Pressable>
@@ -282,7 +322,12 @@ export default function App() {
               ? vendorTip
               : "The real killer is the OEM skin, not AOSP. On aggressive vendors (Xiaomi, Oppo, Vivo, Transsion/Tecno/Infinix) enable autostart or the tile can be prevented from running."}
           </Text>
-          <Pressable style={styles.secondaryBtn} onPress={HabitTile.openAppSettings}>
+          <Pressable
+            style={styles.secondaryBtn}
+            onPress={HabitTile.openAppSettings}
+            accessibilityRole="button"
+            accessibilityLabel="Open app settings"
+          >
             <Text style={styles.secondaryBtnText}>Open app settings</Text>
           </Pressable>
         </View>

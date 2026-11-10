@@ -12,7 +12,7 @@ Built with Expo SDK 57 and a local Kotlin native module. Android only.
   <tr>
     <td align="center"><img src="docs/screenshots/02-tile-inactive.png" width="200"><br><sub>Unlogged, with a subtitle that changes through the day</sub></td>
     <td align="center"><img src="docs/screenshots/03-tile-tap-active.png" width="200"><br><sub>One tap logs it</sub></td>
-    <td align="center"><img src="docs/screenshots/05-tile-rest-day.png" width="200"><br><sub>Rest day greys it out</sub></td>
+    <td align="center"><img src="docs/screenshots/05-tile-rest-day.png" width="200"><br><sub>Rest day keeps the streak and the tile stays tappable</sub></td>
     <td align="center"><img src="docs/screenshots/09-tile-editor.png" width="200"><br><sub>In the shade's tile editor</sub></td>
   </tr>
 </table>
@@ -89,7 +89,6 @@ The OEM battery layer (Xiaomi, Oppo, Vivo, Transsion) cannot be reproduced on an
 
 - Home-screen widget with a streak grid, sharing the same store.
 - The app doesn't refresh after a tile tap while it's already on screen; it updates on the next foreground.
-- A rest day currently doesn't preserve the streak across the skipped day.
 - One hardcoded habit; no custom name or icon yet.
 
 ## License

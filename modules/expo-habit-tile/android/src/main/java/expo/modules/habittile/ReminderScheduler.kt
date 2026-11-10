@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Build
+import android.util.Log
 import android.service.quicksettings.TileService
 import java.util.Calendar
 
@@ -33,6 +34,7 @@ import java.util.Calendar
  * fine for a nudge.
  */
 object ReminderScheduler {
+    private const val TAG = "ReminderScheduler"
     const val CHANNEL_ID = "streak_reminder"
     const val NOTIFICATION_ID = 42
     const val ACTION_LOG_NOW = "expo.modules.habittile.ACTION_LOG_NOW"
@@ -53,8 +55,8 @@ object ReminderScheduler {
         val at = nextTriggerAt(app, now)
         try {
             alarmManager(app).setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, alarmPendingIntent(app))
-        } catch (_: Throwable) {
-            // Best effort; the next touchpoint will try again.
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to arm reminder alarm; next touchpoint will retry", t)
         }
         return at
     }
@@ -82,7 +84,8 @@ object ReminderScheduler {
     fun cancelAll(ctx: Context) {
         try {
             alarmManager(ctx).cancel(alarmPendingIntent(ctx))
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to cancel reminder alarm", t)
         }
         cancelNotification(ctx)
     }
@@ -171,8 +174,9 @@ object ReminderScheduler {
                 ctx.applicationContext,
                 ComponentName(ctx.applicationContext, HabitTileService::class.java)
             )
-        } catch (_: Throwable) {
-            // The tile may not be added; that's fine.
+        } catch (t: Throwable) {
+            // The tile may not be added; that's fine, but leave a trace.
+            Log.w(TAG, "Failed to request tile listening refresh", t)
         }
     }
 

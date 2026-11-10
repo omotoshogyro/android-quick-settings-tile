@@ -1,8 +1,6 @@
 package expo.modules.habittile
 
 import android.content.Context
-import java.util.Calendar
-import java.util.concurrent.TimeUnit
 
 /**
  * Single source of truth for the habit, shared by the Tile (instantiated by the
@@ -21,6 +19,10 @@ object HabitStore {
     private const val KEY_LAST_LOGGED = "last_logged_at" // epoch ms, 0 = never
     private const val KEY_STREAK = "streak_raw"          // streak as of the last log
     private const val KEY_REST_DAY_AT = "rest_day_at"    // epoch ms of the day marked as rest
+    private const val KEY_REST_DAYS = "rest_days"         // comma-separated local day indices
+    private const val KEY_UNDO_LAST = "undo_last_logged_at"
+    private const val KEY_UNDO_STREAK = "undo_streak_raw"
+    private const val KEY_UNDO_REST = "undo_rest_today"
     private const val KEY_HEARTBEAT = "heartbeat_at"     // last time the app process was alive
     private const val KEY_REMINDER_ENABLED = "reminder_enabled"
     private const val KEY_REMINDER_HOUR = "reminder_hour"
@@ -32,99 +34,84 @@ object HabitStore {
     private fun prefs(ctx: Context) =
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** Local calendar-day index (days since epoch in the device's time zone). */
-    private fun localDay(millis: Long): Long {
-        val cal = Calendar.getInstance().apply { timeInMillis = millis }
-        val offset = cal.get(Calendar.ZONE_OFFSET) + cal.get(Calendar.DST_OFFSET)
-        return TimeUnit.MILLISECONDS.toDays(millis + offset)
+    private val lock = Any()
+
+    private fun load(ctx: Context): HabitLogic.Habit {
+        val p = prefs(ctx)
+        val rest = HashSet<Long>()
+        p.getString(KEY_REST_DAYS, "")?.split(',')?.forEach { it.toLongOrNull()?.let(rest::add) }
+        val legacy = p.getLong(KEY_REST_DAY_AT, 0L)
+        if (legacy > 0L) rest.add(HabitLogic.localDay(legacy))
+        return HabitLogic.Habit(p.getLong(KEY_LAST_LOGGED, 0L), p.getInt(KEY_STREAK, 0), rest)
+    }
+
+    private fun loadUndo(ctx: Context): HabitLogic.Undo? {
+        val p = prefs(ctx)
+        if (!p.contains(KEY_UNDO_LAST)) return null
+        return HabitLogic.Undo(
+            p.getLong(KEY_UNDO_LAST, 0L), p.getInt(KEY_UNDO_STREAK, 0), p.getBoolean(KEY_UNDO_REST, false)
+        )
+    }
+
+    /** commit() (not apply()) so other processes reading the prefs see the write immediately. */
+    private fun save(ctx: Context, h: HabitLogic.Habit, undo: HabitLogic.Undo?) {
+        val e = prefs(ctx).edit()
+            .putLong(KEY_LAST_LOGGED, h.lastLoggedAt)
+            .putInt(KEY_STREAK, h.rawStreak)
+            .putString(KEY_REST_DAYS, h.restDays.sorted().joinToString(","))
+            .remove(KEY_REST_DAY_AT)
+        if (undo != null) {
+            e.putLong(KEY_UNDO_LAST, undo.lastLoggedAt)
+                .putInt(KEY_UNDO_STREAK, undo.rawStreak)
+                .putBoolean(KEY_UNDO_REST, undo.restToday)
+        } else {
+            e.remove(KEY_UNDO_LAST).remove(KEY_UNDO_STREAK).remove(KEY_UNDO_REST)
+        }
+        e.commit()
     }
 
     fun lastLoggedAt(ctx: Context): Long = prefs(ctx).getLong(KEY_LAST_LOGGED, 0L)
 
-    fun loggedToday(ctx: Context, now: Long = System.currentTimeMillis()): Boolean {
-        val last = lastLoggedAt(ctx)
-        return last > 0L && localDay(last) == localDay(now)
-    }
+    fun loggedToday(ctx: Context, now: Long = System.currentTimeMillis()): Boolean =
+        HabitLogic.loggedToday(load(ctx), now)
 
-    /**
-     * Streak derived on read. Alive if logged today or yesterday; lapsed (0) once
-     * a full day has been missed. The stored value is never mutated here.
-     */
-    fun currentStreak(ctx: Context, now: Long = System.currentTimeMillis()): Int {
-        val last = lastLoggedAt(ctx)
-        if (last <= 0L) return 0
-        val raw = prefs(ctx).getInt(KEY_STREAK, 0)
-        return when (localDay(now) - localDay(last)) {
-            in Long.MIN_VALUE..0L -> raw // logged today (or clock skew)
-            1L -> raw                    // logged yesterday, still continuable today
-            else -> 0                    // missed a full day -> lapsed
-        }
-    }
+    /** Streak derived on read; rest days preserve it. The stored value is never mutated here. */
+    fun currentStreak(ctx: Context, now: Long = System.currentTimeMillis()): Int =
+        HabitLogic.currentStreak(load(ctx), now)
 
     /** Log the habit for "now". Idempotent within the same local day. */
-    fun logHabit(ctx: Context, now: Long = System.currentTimeMillis()) {
-        val last = lastLoggedAt(ctx)
-        val today = localDay(now)
-        if (last > 0L && localDay(last) == today) return // already logged today
-        val alive = currentStreak(ctx, now) // raw if continuable, 0 if lapsed/never
-        val newStreak =
-            if (last > 0L && today - localDay(last) == 1L) alive + 1 else 1
-        prefs(ctx).edit()
-            .putLong(KEY_LAST_LOGGED, now)
-            .putInt(KEY_STREAK, newStreak)
-            .putLong(KEY_REST_DAY_AT, 0L) // logging clears any rest-day mark
-            .apply()
+    fun logHabit(ctx: Context, now: Long = System.currentTimeMillis()) = synchronized(lock) {
+        val r = HabitLogic.log(load(ctx), now)
+        if (r.undo != null) save(ctx, r.habit, r.undo)
     }
 
-    fun isRestDay(ctx: Context, now: Long = System.currentTimeMillis()): Boolean {
-        val restAt = prefs(ctx).getLong(KEY_REST_DAY_AT, 0L)
-        return restAt > 0L && localDay(restAt) == localDay(now)
+    /** Undo today's log, restoring the previous values. Returns true if something was undone. */
+    fun unlogToday(ctx: Context, now: Long = System.currentTimeMillis()): Boolean = synchronized(lock) {
+        val h = load(ctx)
+        if (!HabitLogic.loggedToday(h, now)) return false
+        val undo = loadUndo(ctx) ?: return false
+        save(ctx, HabitLogic.unlog(h, undo, now), null)
+        true
     }
 
-    fun setRestDay(ctx: Context, rest: Boolean, now: Long = System.currentTimeMillis()) {
-        prefs(ctx).edit().putLong(KEY_REST_DAY_AT, if (rest) now else 0L).apply()
+    fun isRestDay(ctx: Context, now: Long = System.currentTimeMillis()): Boolean =
+        HabitLogic.isRestDay(load(ctx), now)
+
+    fun setRestDay(ctx: Context, rest: Boolean, now: Long = System.currentTimeMillis()) = synchronized(lock) {
+        val h = HabitLogic.setRestDay(load(ctx), rest, now)
+        // Keep any pending undo: restoring a rest mark is handled by the Undo record.
+        save(ctx, h, loadUndo(ctx))
     }
 
-    /** Fractional hours until local midnight. */
-    fun hoursLeftToday(now: Long = System.currentTimeMillis()): Double {
-        val cal = Calendar.getInstance().apply { timeInMillis = now }
-        val h = cal.get(Calendar.HOUR_OF_DAY)
-        val m = cal.get(Calendar.MINUTE)
-        return 24.0 - (h + m / 60.0)
-    }
+    /** Hours until local midnight (real elapsed hours, DST-safe). */
+    fun hoursLeftToday(now: Long = System.currentTimeMillis()): Double = HabitLogic.hoursLeftToday(now)
 
-    /**
-     * The contextual subtitle, computed fresh on every read — so the same stored
-     * state reads differently depending on when the shade happens to open.
-     */
-    fun subtitle(ctx: Context, now: Long = System.currentTimeMillis()): String {
-        if (isRestDay(ctx, now)) return "Rest day"
-        val streak = currentStreak(ctx, now)
-        if (loggedToday(ctx, now)) {
-            return if (streak > 0) "$streak day streak · done" else "Done today"
-        }
-        if (streak <= 0) return "Start your streak"
-        val left = hoursLeftToday(now)
-        val tail = when {
-            left <= 1.0 -> "last hour"
-            left <= 5.0 -> "${left.toInt()}h left"
-            else -> "not yet"
-        }
-        return "$streak day streak · $tail"
-    }
+    fun subtitle(ctx: Context, now: Long = System.currentTimeMillis()): String =
+        HabitLogic.subtitle(load(ctx), now)
 
     /** Milliseconds from [now] until the next local midnight (>= 0). */
-    fun msUntilLocalMidnight(now: Long = System.currentTimeMillis()): Long {
-        val cal = Calendar.getInstance().apply {
-            timeInMillis = now
-            add(Calendar.DAY_OF_YEAR, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        return (cal.timeInMillis - now).coerceAtLeast(0L)
-    }
+    fun msUntilLocalMidnight(now: Long = System.currentTimeMillis()): Long =
+        HabitLogic.msUntilLocalMidnight(now)
 
     // ---- Streak-at-risk reminder settings ----
     // Only the *settings* live here. Whether a reminder actually fires is
@@ -145,7 +132,7 @@ object HabitStore {
             .putBoolean(KEY_REMINDER_ENABLED, enabled)
             .putInt(KEY_REMINDER_HOUR, hour.coerceIn(0, 23))
             .putInt(KEY_REMINDER_MINUTE, minute.coerceIn(0, 59))
-            .apply()
+            .commit()
     }
 
     fun writeHeartbeat(ctx: Context, now: Long = System.currentTimeMillis()) {

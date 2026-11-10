@@ -34,6 +34,7 @@ export type PermissionResponse = {
 type NativeShape = {
   getState(): HabitState;
   logHabit(): HabitState;
+  unlogToday(): HabitState;
   setRestDay(rest: boolean): HabitState;
   heartbeat(): void;
   getHeartbeatGapMs(): number;
@@ -80,6 +81,8 @@ export const isTileAvailable = (): boolean => Native != null;
 
 export const getState = (): HabitState => Native?.getState() ?? EMPTY;
 export const logHabit = (): HabitState => Native?.logHabit() ?? EMPTY;
+/** Undo today's log, restoring the previous streak. No-op if nothing logged today. */
+export const unlogToday = (): HabitState => Native?.unlogToday?.() ?? getState();
 export const setRestDay = (rest: boolean): HabitState =>
   Native?.setRestDay(rest) ?? EMPTY;
 

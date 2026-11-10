@@ -44,3 +44,9 @@ yarn-error.*
 modules/**/android/.gradle/
 modules/**/android/build/
 modules/**/android/.cxx/
+
+# Android native build output and local signing keys
+android/build/
+android/app/build/
+android/.gradle/
+*.keystore

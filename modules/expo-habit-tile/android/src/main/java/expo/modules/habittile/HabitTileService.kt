@@ -41,8 +41,9 @@ class HabitTileService : TileService() {
         val tile = qsTile ?: return
         val ctx = applicationContext
         tile.state = when {
-            HabitStore.isRestDay(ctx) -> Tile.STATE_UNAVAILABLE // nothing to do today
             HabitStore.loggedToday(ctx) -> Tile.STATE_ACTIVE     // logged
+            // Rest day: shown as "Rest day" but stays tappable, so logging
+            // anyway (a bonus session) is one tap. Logging clears the mark.
             else -> Tile.STATE_INACTIVE                          // still pending
         }
         tile.label = "Log habit"
