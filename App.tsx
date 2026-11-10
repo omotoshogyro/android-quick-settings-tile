@@ -67,8 +67,10 @@ export default function App() {
     fetch(`${DKMA_API}/${m.toLowerCase()}.json`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
-        const tip = j?.user_solution?.[0] ?? j?.name;
-        if (tip) setVendorTip(typeof tip === "string" ? tip : String(tip));
+        const raw = j?.user_solution?.[0] ?? j?.name;
+        // Strip markup; ignore anything too short to be a real instruction.
+        const tip = typeof raw === "string" ? raw.replace(/<[^>]*>/g, "").trim() : "";
+        setVendorTip(tip.length >= 12 ? tip : null);
       })
       .catch(() => setVendorTip(null));
   }, []);
@@ -114,229 +116,244 @@ export default function App() {
 
   const available = HabitTile.isTileAvailable();
 
+  const today = new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+
   return (
     <View style={styles.root}>
       <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.kicker}>DAILY HABIT</Text>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
+          <Text style={styles.date}>{today}</Text>
+          <Text style={styles.title}>Today</Text>
+        </View>
 
-        {/* Streak hero */}
+        {/* Hero: one big tap target, streak underneath */}
         <View style={styles.hero}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.orb,
+              state.loggedToday && styles.orbDone,
+              pressed && !state.loggedToday && { transform: [{ scale: 0.97 }] },
+            ]}
+            onPress={onLog}
+            disabled={state.loggedToday}
+            accessibilityRole="button"
+            accessibilityLabel={state.loggedToday ? "Habit logged today" : "Log habit now"}
+            accessibilityState={{ disabled: state.loggedToday }}
+          >
+            <Text style={[styles.orbText, state.loggedToday && styles.orbTextDone]}>
+              {state.loggedToday ? "✓" : "Log"}
+            </Text>
+          </Pressable>
           <Text style={styles.streakNum}>{state.streak}</Text>
           <Text style={styles.streakLabel}>
             day{state.streak === 1 ? "" : "s"} streak
           </Text>
-          <Text style={styles.subtitle}>{state.subtitle}</Text>
+          {!state.loggedToday && <Text style={styles.subtitle}>{state.subtitle}</Text>}
+          {state.loggedToday && (
+            <Pressable
+              onPress={onUndo}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Undo today's log"
+            >
+              <Text style={styles.link}>Undo today's log</Text>
+            </Pressable>
+          )}
         </View>
 
-        {/* One-tap log */}
-        <Pressable
-          style={({ pressed }) => [
-            styles.logBtn,
-            state.loggedToday && styles.logBtnDone,
-            pressed && { opacity: 0.85 },
-          ]}
-          onPress={onLog}
-          disabled={state.loggedToday}
-          accessibilityRole="button"
-          accessibilityLabel={state.loggedToday ? "Habit logged today" : "Log habit now"}
-          accessibilityState={{ disabled: state.loggedToday }}
-        >
-          <Text style={styles.logBtnText}>
-            {state.loggedToday ? "Logged today ✓" : "Log now"}
-          </Text>
-        </Pressable>
-
-        {state.loggedToday && (
-          <Pressable
-            style={styles.secondaryBtn}
-            onPress={onUndo}
-            accessibilityRole="button"
-            accessibilityLabel="Undo today's log"
-          >
-            <Text style={styles.secondaryBtnText}>Undo today's log</Text>
-          </Pressable>
-        )}
-
-        {/* Rest day */}
-        <View style={styles.rowCard}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.rowTitle}>Rest day</Text>
-            <Text style={styles.rowSub}>Streak is preserved; you can still log if you want</Text>
+        <Text style={styles.sectionLabel}>HABIT</Text>
+        <View style={styles.group}>
+          <View style={styles.row}>
+            <View style={styles.rowText}>
+              <Text style={styles.rowTitle}>Rest day</Text>
+              <Text style={styles.rowSub}>Keeps your streak; you can still log</Text>
+            </View>
+            <Switch
+              value={state.restDay}
+              onValueChange={onToggleRest}
+              trackColor={{ false: "#E4E4E0", true: ACCENT }}
+              thumbColor="#FFFFFF"
+            />
           </View>
-          <Switch value={state.restDay} onValueChange={onToggleRest} />
         </View>
 
-        {/* Streak-at-risk reminder */}
-        <View style={styles.infoCard}>
-          <View style={styles.cardHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>
-                Streak reminder {reminderReady ? "— allowed ✓" : "— off"}
-              </Text>
+        <Text style={styles.sectionLabel}>REMINDER</Text>
+        <View style={styles.group}>
+          <View style={styles.row}>
+            <View style={styles.rowText}>
+              <Text style={styles.rowTitle}>Streak reminder</Text>
               <Text style={styles.rowSub}>
-                Only fires when a streak is live and today is unlogged.
+                Evening nudge when a live streak is unlogged
               </Text>
             </View>
             <Switch
               value={reminder.enabled}
               onValueChange={onToggleReminder}
               disabled={!reminderReady}
+              trackColor={{ false: "#E4E4E0", true: ACCENT }}
+              thumbColor="#FFFFFF"
             />
           </View>
 
           {!reminderReady && (
             <>
-              <Text style={styles.cardBody}>
-                {notifPerm.granted
-                  ? "Notifications are blocked for this app or channel. Re-enable them in app settings."
-                  : "Allow notifications to get a nudge in the evening when a live streak is still unlogged."}
-              </Text>
-              <Pressable
-                style={styles.secondaryBtn}
-                onPress={
-                  !notifPerm.granted && notifPerm.canAskAgain
-                    ? onAllowNotifications
-                    : HabitTile.openAppSettings
-                }
-                accessibilityRole="button"
-                accessibilityLabel={
-                  !notifPerm.granted && notifPerm.canAskAgain
-                    ? "Allow notifications"
-                    : "Open app settings"
-                }
-              >
-                <Text style={styles.secondaryBtnText}>
-                  {!notifPerm.granted && notifPerm.canAskAgain
-                    ? "Allow notifications"
-                    : "Open app settings"}
+              <View style={styles.divider} />
+              <View style={styles.rowBlock}>
+                <Text style={styles.body}>
+                  {notifPerm.granted
+                    ? "Notifications are blocked for this app or channel. Re-enable them in app settings."
+                    : "Allow notifications to get a nudge in the evening when a live streak is still unlogged."}
                 </Text>
-              </Pressable>
+                <Pressable
+                  style={styles.pill}
+                  onPress={
+                    !notifPerm.granted && notifPerm.canAskAgain
+                      ? onAllowNotifications
+                      : HabitTile.openAppSettings
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    !notifPerm.granted && notifPerm.canAskAgain
+                      ? "Allow notifications"
+                      : "Open app settings"
+                  }
+                >
+                  <Text style={styles.pillText}>
+                    {!notifPerm.granted && notifPerm.canAskAgain
+                      ? "Allow notifications"
+                      : "Open app settings"}
+                  </Text>
+                </Pressable>
+              </View>
             </>
           )}
 
           {reminderReady && (
             <>
-              <View style={styles.chipRow}>
-                {REMINDER_PRESETS.map((h) => {
-                  const selected = reminder.hour === h && reminder.minute === 0;
-                  return (
-                    <Pressable
-                      key={h}
-                      style={[styles.chip, selected && styles.chipSelected]}
-                      onPress={() => onPickTime(h, 0)}
-                      disabled={!reminder.enabled}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Remind at ${fmtTime(h, 0)}`}
-                      accessibilityState={{ selected, disabled: !reminder.enabled }}
-                    >
-                      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                        {fmtTime(h, 0)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              <View style={styles.stepperRow}>
-                <Pressable
-                  style={styles.stepBtn}
-                  onPress={() => onStepTime(-15)}
-                  disabled={!reminder.enabled}
-                  accessibilityRole="button"
-                  accessibilityLabel="Remind 15 minutes earlier"
-                  accessibilityState={{ disabled: !reminder.enabled }}
-                >
-                  <Text style={styles.stepBtnText}>−15m</Text>
-                </Pressable>
-                <Text style={styles.timeLabel}>
-                  {fmtTime(reminder.hour, reminder.minute)}
+              <View style={styles.divider} />
+              <View style={styles.rowBlock}>
+                <View style={styles.stepperRow}>
+                  <Pressable
+                    style={styles.stepBtn}
+                    onPress={() => onStepTime(-15)}
+                    disabled={!reminder.enabled}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remind 15 minutes earlier"
+                    accessibilityState={{ disabled: !reminder.enabled }}
+                  >
+                    <Text style={styles.stepBtnText}>−</Text>
+                  </Pressable>
+                  <Text style={[styles.timeLabel, !reminder.enabled && { opacity: 0.35 }]}>
+                    {fmtTime(reminder.hour, reminder.minute)}
+                  </Text>
+                  <Pressable
+                    style={styles.stepBtn}
+                    onPress={() => onStepTime(15)}
+                    disabled={!reminder.enabled}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remind 15 minutes later"
+                    accessibilityState={{ disabled: !reminder.enabled }}
+                  >
+                    <Text style={styles.stepBtnText}>+</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.chipRow}>
+                  {REMINDER_PRESETS.map((h) => {
+                    const selected = reminder.hour === h && reminder.minute === 0;
+                    return (
+                      <Pressable
+                        key={h}
+                        style={[styles.chip, selected && styles.chipSelected]}
+                        onPress={() => onPickTime(h, 0)}
+                        disabled={!reminder.enabled}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remind at ${fmtTime(h, 0)}`}
+                        accessibilityState={{ selected, disabled: !reminder.enabled }}
+                      >
+                        <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+                          {fmtTime(h, 0)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Text style={styles.caption}>
+                  {reminder.enabled && nextCheck
+                    ? `Next check ${fmtTime(nextCheck.getHours(), nextCheck.getMinutes())}${
+                        nextCheck.getDate() !== new Date().getDate() ? " tomorrow" : ""
+                      }. May arrive a few minutes late.`
+                    : "Off. Turn it on to be nudged before midnight."}
                 </Text>
-                <Pressable
-                  style={styles.stepBtn}
-                  onPress={() => onStepTime(15)}
-                  disabled={!reminder.enabled}
-                  accessibilityRole="button"
-                  accessibilityLabel="Remind 15 minutes later"
-                  accessibilityState={{ disabled: !reminder.enabled }}
-                >
-                  <Text style={styles.stepBtnText}>+15m</Text>
-                </Pressable>
               </View>
-              <Text style={styles.cardBody}>
-                {reminder.enabled && nextCheck
-                  ? `Next check: ${fmtTime(nextCheck.getHours(), nextCheck.getMinutes())}${
-                      nextCheck.getDate() !== new Date().getDate() ? " tomorrow" : ""
-                    }. Inexact by design — it may arrive a few minutes late.`
-                  : "Off. Turn it on to be nudged before midnight if a live streak is still unlogged."}
-              </Text>
             </>
           )}
         </View>
 
-        {/* Tile availability + how to add */}
-        <View style={styles.infoCard}>
-          <Text style={styles.cardTitle}>Quick Settings tile</Text>
-          <Text style={styles.cardBody}>
-            {available
-              ? "Native tile is linked. Tap below to add it (or add it manually from the shade’s edit-tiles tray). Tapping the tile logs in one tap and shows a subtitle that changes with the time of day."
-              : "Native module not loaded yet — rebuild the Android app (expo run:android)."}
-          </Text>
-          {available && (
+        <Text style={styles.sectionLabel}>SETUP</Text>
+        <View style={styles.group}>
+          <View style={styles.rowBlock}>
+            <Text style={styles.rowTitle}>Quick Settings tile</Text>
+            <Text style={styles.body}>
+              {available
+                ? "Log in one tap from the notification shade. Add it here or from the shade's edit-tiles tray."
+                : "Native module not loaded yet. Rebuild the Android app (expo run:android)."}
+            </Text>
+            {available && (
+              <Pressable
+                style={styles.pill}
+                onPress={HabitTile.requestAddTile}
+                accessibilityRole="button"
+                accessibilityLabel="Add the Quick Settings tile"
+              >
+                <Text style={styles.pillText}>Add the tile</Text>
+              </Pressable>
+            )}
+          </View>
+          <View style={styles.divider} />
+          <View style={styles.rowBlock}>
+            <Text style={styles.rowTitle}>
+              Battery optimization {batteryExempt ? "· exempt" : "· on"}
+            </Text>
+            <Text style={styles.body}>
+              Exempting the app stops Doze from deferring the reminder.
+            </Text>
             <Pressable
-              style={styles.secondaryBtn}
-              onPress={HabitTile.requestAddTile}
+              style={styles.pill}
+              onPress={HabitTile.openBatteryOptimizationSettings}
               accessibilityRole="button"
-              accessibilityLabel="Add the Quick Settings tile"
+              accessibilityLabel="Open battery settings"
             >
-              <Text style={styles.secondaryBtnText}>Add the tile</Text>
+              <Text style={styles.pillText}>Open battery settings</Text>
             </Pressable>
-          )}
+          </View>
+          <View style={styles.divider} />
+          <View style={styles.rowBlock}>
+            <Text style={styles.rowTitle}>Autostart{vendor ? ` · ${vendor}` : ""}</Text>
+            <Text style={styles.body}>
+              {vendorTip
+                ? vendorTip
+                : "Some vendors (Xiaomi, Oppo, Vivo, Transsion) block background apps unless autostart is enabled."}
+            </Text>
+            <Pressable
+              style={styles.pill}
+              onPress={HabitTile.openAppSettings}
+              accessibilityRole="button"
+              accessibilityLabel="Open app settings"
+            >
+              <Text style={styles.pillText}>Open app settings</Text>
+            </Pressable>
+          </View>
         </View>
 
-        {/* AOSP battery layer */}
-        <View style={styles.infoCard}>
-          <Text style={styles.cardTitle}>
-            Battery optimization {batteryExempt ? "— exempt ✓" : "— on"}
-          </Text>
-          <Text style={styles.cardBody}>
-            This only covers the AOSP layer. Exempting the app stops Doze from
-            deferring it.
-          </Text>
-          <Pressable
-            style={styles.secondaryBtn}
-            onPress={HabitTile.openBatteryOptimizationSettings}
-            accessibilityRole="button"
-            accessibilityLabel="Open battery settings"
-          >
-            <Text style={styles.secondaryBtnText}>Open battery settings</Text>
-          </Pressable>
-        </View>
-
-        {/* OEM layer */}
-        <View style={styles.infoCard}>
-          <Text style={styles.cardTitle}>
-            Autostart {vendor ? `(${vendor})` : ""}
-          </Text>
-          <Text style={styles.cardBody}>
-            {vendorTip
-              ? vendorTip
-              : "The real killer is the OEM skin, not AOSP. On aggressive vendors (Xiaomi, Oppo, Vivo, Transsion/Tecno/Infinix) enable autostart or the tile can be prevented from running."}
-          </Text>
-          <Pressable
-            style={styles.secondaryBtn}
-            onPress={HabitTile.openAppSettings}
-            accessibilityRole="button"
-            accessibilityLabel="Open app settings"
-          >
-            <Text style={styles.secondaryBtnText}>Open app settings</Text>
-          </Pressable>
-        </View>
-
-        {/* Kill detection */}
         <Text style={styles.footnote}>
           {killGapMin > 0
-            ? `Last seen alive ${killGapMin} min ago.`
-            : "Heartbeat running."}
+            ? `Last seen alive ${killGapMin} min ago`
+            : "Heartbeat running"}
           {Platform.OS !== "android" ? "  (Android-only project)" : ""}
         </Text>
       </ScrollView>
@@ -344,85 +361,102 @@ export default function App() {
   );
 }
 
-const INK = "#111827";
+const INK = "#0F1115";
 const ACCENT = "#4F46E5";
+const MUTED = "#8B8F98";
+const LINE = "#EEEEEA";
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#F4F4F7" },
-  content: { padding: 20, paddingTop: 72, paddingBottom: 48, gap: 14 },
-  kicker: {
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.5,
-    color: "#9AA0AE",
-  },
-  hero: {
+  root: { flex: 1, backgroundColor: "#FAFAF7" },
+  content: { paddingHorizontal: 20, paddingTop: 64, paddingBottom: 56 },
+  header: { marginBottom: 8 },
+  date: { fontSize: 14, color: MUTED, fontWeight: "500" },
+  title: { fontSize: 34, fontWeight: "800", color: INK, letterSpacing: -0.8, marginTop: 2 },
+
+  hero: { alignItems: "center", paddingVertical: 28 },
+  orb: {
+    width: 176,
+    height: 176,
+    borderRadius: 88,
     backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    paddingVertical: 32,
-    alignItems: "center",
-  },
-  streakNum: { fontSize: 72, fontWeight: "800", color: INK, lineHeight: 78 },
-  streakLabel: { fontSize: 16, fontWeight: "600", color: "#6B7280", marginTop: 2 },
-  subtitle: { fontSize: 15, color: ACCENT, fontWeight: "600", marginTop: 14 },
-  logBtn: {
-    backgroundColor: ACCENT,
-    borderRadius: 18,
-    paddingVertical: 18,
-    alignItems: "center",
-  },
-  logBtnDone: { backgroundColor: "#22C55E" },
-  logBtnText: { color: "#FFFFFF", fontSize: 17, fontWeight: "700" },
-  rowCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 16,
-  },
-  rowTitle: { fontSize: 16, fontWeight: "600", color: INK },
-  rowSub: { fontSize: 13, color: "#8A90A0", marginTop: 2 },
-  infoCard: { backgroundColor: "#FFFFFF", borderRadius: 18, padding: 16, gap: 10 },
-  cardTitle: { fontSize: 16, fontWeight: "700", color: INK },
-  cardBody: { fontSize: 14, lineHeight: 20, color: "#4B5563" },
-  secondaryBtn: {
-    alignSelf: "flex-start",
-    backgroundColor: "#EEF0FF",
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-  },
-  secondaryBtnText: { color: ACCENT, fontWeight: "700", fontSize: 14 },
-  cardHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: {
-    backgroundColor: "#EEF0FF",
-    borderRadius: 999,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  chipSelected: { backgroundColor: ACCENT },
-  chipText: { color: ACCENT, fontWeight: "700", fontSize: 13 },
-  chipTextSelected: { color: "#FFFFFF" },
-  stepperRow: {
-    flexDirection: "row",
+    borderWidth: 3,
+    borderColor: ACCENT,
     alignItems: "center",
     justifyContent: "center",
-    gap: 16,
+    shadowColor: ACCENT,
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 6,
   },
-  stepBtn: {
-    backgroundColor: "#F4F4F7",
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  stepBtnText: { color: INK, fontWeight: "700", fontSize: 13 },
-  timeLabel: {
-    fontSize: 22,
+  orbDone: { backgroundColor: ACCENT, borderColor: ACCENT },
+  orbText: { fontSize: 40, fontWeight: "800", color: ACCENT, letterSpacing: -0.5 },
+  orbTextDone: { color: "#FFFFFF", fontSize: 64 },
+  streakNum: {
+    fontSize: 64,
     fontWeight: "800",
     color: INK,
+    letterSpacing: -2,
+    marginTop: 28,
+    lineHeight: 68,
+  },
+  streakLabel: { fontSize: 15, fontWeight: "600", color: MUTED, marginTop: 2 },
+  subtitle: { fontSize: 14, color: ACCENT, fontWeight: "600", marginTop: 12 },
+  link: { fontSize: 13, color: MUTED, fontWeight: "600", marginTop: 14, textDecorationLine: "underline" },
+
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+    color: MUTED,
+    marginTop: 20,
+    marginBottom: 8,
+    marginLeft: 6,
+  },
+  group: { backgroundColor: "#FFFFFF", borderRadius: 20, overflow: "hidden" },
+  row: { flexDirection: "row", alignItems: "center", padding: 16, gap: 12 },
+  rowText: { flex: 1 },
+  rowBlock: { padding: 16, gap: 10 },
+  rowTitle: { fontSize: 16, fontWeight: "600", color: INK },
+  rowSub: { fontSize: 13, color: MUTED, marginTop: 2 },
+  divider: { height: StyleSheet.hairlineWidth, backgroundColor: LINE, marginLeft: 16 },
+  body: { fontSize: 14, lineHeight: 20, color: "#5B6068" },
+  caption: { fontSize: 12, color: MUTED },
+  pill: {
+    alignSelf: "flex-start",
+    backgroundColor: "#F1F0FF",
+    borderRadius: 999,
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+  },
+  pillText: { color: ACCENT, fontWeight: "700", fontSize: 13 },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: {
+    backgroundColor: "#F4F4F1",
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  chipSelected: { backgroundColor: INK },
+  chipText: { color: "#4B5058", fontWeight: "600", fontSize: 13 },
+  chipTextSelected: { color: "#FFFFFF" },
+  stepperRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 24 },
+  stepBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#F4F4F1",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepBtnText: { color: INK, fontWeight: "600", fontSize: 22, lineHeight: 26 },
+  timeLabel: {
+    fontSize: 36,
+    fontWeight: "800",
+    color: INK,
+    letterSpacing: -1,
     fontVariant: ["tabular-nums"],
-    minWidth: 72,
+    minWidth: 110,
     textAlign: "center",
   },
-  footnote: { fontSize: 12, color: "#9AA0AE", textAlign: "center", marginTop: 8 },
+  footnote: { fontSize: 12, color: MUTED, textAlign: "center", marginTop: 24 },
 });
